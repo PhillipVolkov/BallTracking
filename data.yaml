@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 5
+names: ['Tennis-Ball', 'Tennis-ball', 'TennisBall', 'tennis', 'tennis-ball']
+
+roboflow:
+  workspace: uc-berkely-w210-tracer
+  project: tracer-tennis-ball
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/uc-berkely-w210-tracer/tracer-tennis-ball/dataset/1
