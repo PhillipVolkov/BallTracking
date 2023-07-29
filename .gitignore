@@ -2,3 +2,4 @@ datasets/*
 references/*
 runs/*
 bounce_data/*
+models/yolov8x.pt
