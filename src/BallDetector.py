@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import cv2
 import time
 import csv
-import math
+from copy import copy
 from FPS import FPS
 from Plotter import Plotter
 from SumQueue import SumQueue
@@ -18,6 +18,12 @@ class BallDetector:
         self.BUFFER_SIZE = 64
         self.EXPORT_DATA = [["time", "x", "y", "x'", "y'", "bounce?"]]
         self.YOLO_MODEL = 'src/models/v1.pt'
+        
+        self.BOUNCE_DATA_SRC = 'src/data/bounce_data/bounce_data.csv'
+        self.BOUNCE_FRAME_SRC = 'src/data/bounce_frames/'
+        self.NUM_BOUNCE_PTS = 6
+        self.BOUNCE_THRESHOLD = 1
+        
         self.PLOT = True
         
     def configure(self):
@@ -25,6 +31,8 @@ class BallDetector:
         self.cam = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         self.cam.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cam.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.prevFrames = deque(maxlen=self.NUM_BOUNCE_PTS)
+        self.numBounceFrames = 0
         
         # specify model
         self.model = YOLO(self.YOLO_MODEL)
@@ -74,6 +82,7 @@ class BallDetector:
     # get frame from cam
     def fetchFrame(self):
         ret, self.frame = self.cam.read()
+        self.prevFrames.appendleft(copy(self.frame))
         
     # run yolo classifier on frame
     def applyModel(self):
@@ -153,11 +162,10 @@ class BallDetector:
         
     # bounce detection
     def detectBounce(self, dx, dy):
-        NUM_PTS = 6
-        THRESHOLD = 1
         bounceDetected = False
+        bounceFrame = 0
         
-        if len(dx) < NUM_PTS or len(dy) < NUM_PTS or len(self.pts) < NUM_PTS:
+        if len(dx) < self.NUM_BOUNCE_PTS or len(dy) < self.NUM_BOUNCE_PTS or len(self.pts) < self.NUM_BOUNCE_PTS:
             return
         
         '''
@@ -169,19 +177,31 @@ class BallDetector:
         # only perform search if end point is currently above zero
         if dy[0] > 0:
             # search for criterion with first point up to 5 points away from current (end point)
-            for i in range(1,6):
+            for i in range(1,self.NUM_BOUNCE_PTS):
                 # if bounce already detected within range, break
                 if self.pts[i] is not None and self.pts[i][-1]:
                     bounceDetected = False
                     break
-                if abs(dy[i]) > THRESHOLD and (dy[0] > 0 and dy[i] < 0) and (-dy[i] > dy[0]):
+                if abs(dy[i]) > self.BOUNCE_THRESHOLD and (dy[0] > 0 and dy[i] < 0) and (-dy[i] > dy[0]):
                     bounceDetected = True
                     break
+                
+        # Detect the exact bounce frame within range (min y value)
+        if (bounceDetected):
+            minY = self.pts[0][0][1]
+            for i in range(1, self.NUM_BOUNCE_PTS):
+                # (Y IS INVERTED)
+                if self.pts[i] is not None and self.pts[i][0][1] > minY:
+                    minY = self.pts[i][0][1]
+                    bounceFrame = i
+                    
             
         # Updates pts and export that bounce occured
         if (bounceDetected):
-            self.pts[0][-1] = True
-            self.EXPORT_DATA[-1][-1] = True
+            self.pts[bounceFrame][-1] = True
+            self.EXPORT_DATA[-(1+bounceFrame)][-1] = True
+            cv2.imwrite(self.BOUNCE_FRAME_SRC+f'bounce_frame{self.numBounceFrames}.jpg', self.prevFrames[bounceFrame])
+            self.numBounceFrames+=1
             
         # Plot the bounce
         if (self.PLOT):
@@ -239,7 +259,7 @@ class BallDetector:
                 self.plotter.update()
             
     def writeBounceData(self):
-        with open('src/data/bounce_data/bounce_data.csv', 'w', encoding='UTF8', newline='') as w:
+        with open(self.BOUNCE_DATA_SRC, 'w', encoding='UTF8', newline='') as w:
             writer = csv.writer(w)
             for row in self.EXPORT_DATA:
                 writer.writerow(row)

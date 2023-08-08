@@ -1,5 +1,3 @@
 datasets/*
-references/*
-runs/*
-bounce_data/*
-models/yolov8x.pt
+src/data/bounce_frames/*
+src/data/bounce_data/bounce_data.csv
