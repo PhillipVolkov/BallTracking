@@ -16,7 +16,7 @@ class BallDetector:
     # set constants
     def __init__(self):
         self.BUFFER_SIZE = 64
-        self.EXPORT_DATA = [["time", "x", "y", "x'", "y'", "x''", "y''", "y''/y'", "bounce?"]]
+        self.EXPORT_DATA = [["time", "x", "y", "x'", "y'", "bounce?"]]
         self.YOLO_MODEL = 'src/models/v1.pt'
         self.PLOT = True
         
@@ -50,31 +50,23 @@ class BallDetector:
             fig.set_dpi(80)
             
             self.xPlot, = ax[0,0].plot([], [], animated=True)
-            self.xPlotLine, = ax[0,0].plot([], [], animated=True)
-            self.xPlotNext, = ax[0,0].plot([], [], animated=True)
             self.xPlotBounce, = ax[0,0].plot([], [], animated=True, color="red", marker="o", markersize=5, linestyle="None")
             ax[0,0].set(title="X Plot", xlim=(-500,1000), ylim=(0,self.cam.get(cv2.CAP_PROP_FRAME_WIDTH)))
             
             self.xFirstDerivativePlot, = ax[0,1].plot([], [], animated=True)
-            self.xSecondDerivativePlot, = ax[0,1].plot([], [], animated=True)
-            self.xSecondDerivativeAveragePlot, = ax[0,1].plot([], [], animated=True)
-            ax[0,1].set(title="X' Plot", xlim=(-500,1000), ylim=(-.5,.5))
+            ax[0,1].set(title="X' Plot", xlim=(-500,1000), ylim=(-5,5))
             
             self.yPlot, = ax[1,0].plot([], [], animated=True)
-            self.yPlotLine, = ax[1,0].plot([], [], animated=True)
-            self.yPlotNext, = ax[1,0].plot([], [], animated=True)
             self.yPlotBounce, = ax[1,0].plot([], [], animated=True, color="red", marker="o", markersize=5, linestyle="None")
             ax[1,0].set(title="Y Plot", xlim=(-500,1000), ylim=(0,self.cam.get(cv2.CAP_PROP_FRAME_HEIGHT)))
             ax[1,0].invert_yaxis()
             
             self.yFirstDerivativePlot, = ax[1,1].plot([], [], animated=True)
-            self.ySecondDerivativePlot, = ax[1,1].plot([], [], animated=True)
-            self.ySecondDerivativeAveragePlot, = ax[1,1].plot([], [], animated=True)
-            ax[1,1].set(title="Y' Plot", xlim=(-500,1000), ylim=(-.5,.5))
+            ax[1,1].set(title="Y' Plot", xlim=(-500,1000), ylim=(-5,5))
             ax[1,1].invert_yaxis()
             
-            self.plotter = Plotter(fig.canvas, [self.xPlot, self.xPlotLine, self.xPlotNext, self.xFirstDerivativePlot, self.xSecondDerivativePlot, self.xSecondDerivativeAveragePlot, self.xPlotBounce, 
-                                                self.yPlot, self.yPlotLine, self.yPlotNext, self.yFirstDerivativePlot, self.ySecondDerivativePlot, self.ySecondDerivativeAveragePlot, self.yPlotBounce])
+            self.plotter = Plotter(fig.canvas, [self.xPlot, self.xFirstDerivativePlot, self.xPlotBounce, 
+                                                self.yPlot, self.yFirstDerivativePlot, self.yPlotBounce])
             plt.tight_layout()
             plt.show(block=False)
             plt.pause(.1)
@@ -104,22 +96,24 @@ class BallDetector:
             coords = self.balls[0].xywh.tolist()[0]
             center = ((int)(coords[0]), (int)(coords[1]))
         
-            self.pts.appendleft([center, time.time()*1000.0-self.startTime, False])
+            self.pts.appendleft([center, time.time()*1000.0-self.startTime, 0, 0, False])
             cv2.circle(self.frame, center, 10, (0, 0, 255), -1)
         else:
             self.pts.appendleft(None)
 
         if self.pts[0] is not None:
-            self.EXPORT_DATA.append([self.pts[0][1], self.pts[0][0][0], self.pts[0][0][1], 0, 0, 0, 0, 0, False])
+            self.EXPORT_DATA.append([self.pts[0][1], self.pts[0][0][0], self.pts[0][0][1], 0, 0, False])
                 
     # draws current trajectory
-    def drawTrajectory(self, t, x, y):
+    def drawTrajectory(self, t, x, y, dx, dy):
         currTime = time.time()*1000.0-self.startTime
         for i in range(0, len(self.pts)):
             if self.pts[i] is not None:
                 t.append(currTime-self.pts[i][1])
                 x.append(self.pts[i][0][0])
                 y.append(self.pts[i][0][1])
+                dx.append(self.pts[i][2])
+                dy.append(self.pts[i][3])
             # if either of the tracked points are None, ignore them
             if self.pts[i - 1] is None or self.pts[i] is None or i == 0:
                 continue
@@ -132,65 +126,76 @@ class BallDetector:
             self.xPlot.set_data(t, x)
             self.yPlot.set_data(t, y)
             
-        return t, x, y
+        return t, x, y, dx, dy
     
-    # fits splines to current trajectory
-    def fitTrajectory(self, t, x, y):
-        if len(x) >= 5 and len(y) >= 5:
-            # fit a parabola onto points
-            xLine = intr.UnivariateSpline(t, x, k=3)#np.poly1d(np.polyfit(t,x,2))
-            yLine = intr.UnivariateSpline(t, y, k=3)#np.poly1d(np.polyfit(t,y,2))
+    # calculates derivative for the current points
+    def calcDerivative(self, t, x, y, prevDx, prevDy):
+        if len(x) >= 2 and len(y) >= 2:
+            dt = t[0]-t[1]
+            dx = x[0]-x[1]
+            dy = y[0]-y[1]
             
-            xFirstDerivativeLine = xLine.derivative(n=1)
-            xSecondDerivativeLine = xLine.derivative(n=2)
-            yFirstDerivativeLine = xLine.derivative(n=1)
-            ySecondDerivativeLine = yLine.derivative(n=2)
+            prevDx[0] = dx/dt
+            prevDy[0] = dy/dt
+            self.pts[0][2] = prevDx[0]
+            self.pts[0][3] = prevDy[0]
             
-            # plot predicted line
+            # plot derivative graph
             if (self.PLOT):
-                tPlots = np.arange(0, 1000, 50)
-                self.xPlotLine.set_data(tPlots, xLine(tPlots))
-                self.yPlotLine.set_data(tPlots, yLine(tPlots))
-                self.xFirstDerivativePlot.set_data(tPlots, xFirstDerivativeLine(tPlots))
-                self.xSecondDerivativePlot.set_data(tPlots, xSecondDerivativeLine(tPlots))
-                self.yFirstDerivativePlot.set_data(tPlots, yFirstDerivativeLine(tPlots))
-                self.ySecondDerivativePlot.set_data(tPlots, ySecondDerivativeLine(tPlots))
+                self.xFirstDerivativePlot.set_data(t, prevDx)
+                self.yFirstDerivativePlot.set_data(t, prevDy)
                 
-            self.EXPORT_DATA[-1][3] = xFirstDerivativeLine(0)
-            self.EXPORT_DATA[-1][4] = yFirstDerivativeLine(0)
-            self.EXPORT_DATA[-1][5] = xSecondDerivativeLine(0)
-            self.EXPORT_DATA[-1][6] = ySecondDerivativeLine(0)
-            self.EXPORT_DATA[-1][7] = ySecondDerivativeLine(0)/yFirstDerivativeLine(0)
+            self.EXPORT_DATA[-1][3] = prevDx[0]
+            self.EXPORT_DATA[-1][4] = prevDy[0]
                 
-            return xFirstDerivativeLine(0), xSecondDerivativeLine(0), yFirstDerivativeLine(0), ySecondDerivativeLine(0)
-        return 0, 0, 0, 0
+            return prevDx, prevDy
+        return [], [],
         
     # bounce detection
-    def detectBounce(self, xFirstDerivative, xSecondDerivative, yFirstDerivative, ySecondDerivative):
-        averageX = self.averageAcceleration[0].getSum()/self.BUFFER_SIZE
-        averageY = self.averageAcceleration[1].getSum()/self.BUFFER_SIZE
+    def detectBounce(self, dx, dy):
+        NUM_PTS = 6
+        THRESHOLD = 1
+        bounceDetected = False
         
-        if abs(xSecondDerivative) > (averageX+0.05)*2 or abs(ySecondDerivative) > (averageY+0.05)*2:
-            self.pts[0][2] = True
+        if len(dx) < NUM_PTS or len(dy) < NUM_PTS or len(self.pts) < NUM_PTS:
+            return
+        
+        '''
+        Invarient:
+        1) First point has to be above the magnitutde threshold
+        2) End point has to be above zero and first point has to be below zero
+        3) First point needs to be greater in magnitutde then end point
+        '''
+        # only perform search if end point is currently above zero
+        if dy[0] > 0:
+            # search for criterion with first point up to 5 points away from current (end point)
+            for i in range(1,6):
+                # if bounce already detected within range, break
+                if self.pts[i] is not None and self.pts[i][-1]:
+                    bounceDetected = False
+                    break
+                if abs(dy[i]) > THRESHOLD and (dy[0] > 0 and dy[i] < 0) and (-dy[i] > dy[0]):
+                    bounceDetected = True
+                    break
+            
+        # Updates pts and export that bounce occured
+        if (bounceDetected):
+            self.pts[0][-1] = True
             self.EXPORT_DATA[-1][-1] = True
             
+        # Plot the bounce
         if (self.PLOT):
             currTime = time.time()*1000.0-self.startTime
             t = []
             x = []
             y = []
             for i in range(0, len(self.pts)):
-                if self.pts[i] is not None and self.pts[i][2]:
+                if self.pts[i] is not None and self.pts[i][-1]:
                     t.append(currTime-self.pts[i][1])
                     x.append(self.pts[i][0][0])
                     y.append(self.pts[i][0][1])
             self.xPlotBounce.set_data(t, x)
             self.yPlotBounce.set_data(t, y)
-            self.xSecondDerivativeAveragePlot.set_data([0, 1000], [averageX, averageX])
-            self.ySecondDerivativeAveragePlot.set_data([0, 1000], [averageY, averageY])
-        
-        self.averageAcceleration[0].add(abs(xSecondDerivative))
-        self.averageAcceleration[1].add(abs(ySecondDerivative))
     
     # predicts next point for the trajectory
     def predictNextPoint(self, t, x, y, xLine, yLine):
@@ -222,10 +227,12 @@ class BallDetector:
             t = []
             x = []
             y = []
+            dx = []
+            dy = []
 
-            t, x, y = self.drawTrajectory(t, x, y)
-            xFirstDerivative, xSecondDerivative, yFirstDerivative, ySecondDerivative = self.fitTrajectory(t, x, y)
-            self.detectBounce(xFirstDerivative, xSecondDerivative, yFirstDerivative, ySecondDerivative)
+            t, x, y, dx, dy = self.drawTrajectory(t, x, y, dx, dy)
+            xFirstDerivative, yFirstDerivative = self.calcDerivative(t, x, y, dx, dy)
+            self.detectBounce(xFirstDerivative, yFirstDerivative)
             # self.predictNextPoint(t, x, y)
             
             if (self.PLOT):
